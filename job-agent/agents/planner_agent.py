@@ -54,29 +54,40 @@ async def planner_node(state: AgentState) -> AgentState:
         ]
       )
 
-      prompt = f"""You are a job search strategist.
+      prompt = f"""You are an expert job search strategist.
 
-CANDIDATE:
+CANDIDATE PROFILE:
 Skills: {', '.join(skills[:25])}
-Roles: {', '.join(roles)}
+Target Roles: {', '.join(roles)}
 Experience: {experience} years
 Bio: {bio[:200]}
 Projects: {project_summary}
+Keywords: {', '.join(keywords[:15])}
 
-JOB BOARDS AVAILABLE:
-{json.dumps(all_urls[:15], indent=2)}
+AVAILABLE JOB BOARDS:
+{json.dumps(all_urls[:18], indent=2)}
 
-TASKS:
-1. Pick 8 most relevant job boards for this candidate
-2. Write specific search queries using candidate skills + roles
-3. Suggest 5 company career page URLs that hire this type of candidate
+YOUR TASK:
+1. Select 10 most relevant job boards for this candidate
+2. For each board write a SPECIFIC search query using
+   candidate's actual skills and role names
+3. Suggest 5 company career pages relevant to this profile
+4. Generate 3 alternative role titles to search for
+   (e.g. "Backend Developer" → also search "Python Engineer",
+   "API Developer", "Server-side Developer")
 
-Return ONLY this JSON:
+Return ONLY this JSON (no markdown):
 {{
   "sites": [
-    {{"url": "<url>", "query": "<specific query>", "seniority": "entry|mid|senior"}}
+    {{
+      "url": "<board_url>",
+      "query": "<specific query with skills>",
+      "seniority": "entry|mid|senior",
+      "alternative_queries": ["<alt1>", "<alt2>"]
+    }}
   ],
-  "company_career_pages": ["<url1>", "<url2>", "<url3>", "<url4>", "<url5>"]
+  "company_career_pages": ["<url1>","<url2>","<url3>","<url4>","<url5>"],
+  "alternative_roles": ["<role1>","<role2>","<role3>"]
 }}"""
 
       resp = await asyncio.wait_for(gemini.chat(prompt), timeout=25.0)
@@ -89,6 +100,7 @@ Return ONLY this JSON:
       data = json.loads(clean[s:e])
       sites = data.get("sites", [])
       company_pages = data.get("company_career_pages", [])
+      alternative_roles = data.get("alternative_roles", [])
 
       if company_pages:
         _store_career_urls(state["user_id"], company_pages)
@@ -97,6 +109,7 @@ Return ONLY this JSON:
       logger.warning("Gemini planner failed: %s, using fallback", ex)
       sites = _rule_based_plan(skills, roles, all_urls)
       company_pages = []
+      alternative_roles = []
 
     instructions = {}
     for site in sites:
@@ -114,7 +127,7 @@ Return ONLY this JSON:
       }
 
     instructions["tavily_search"] = {
-      "query": " ".join(keywords[:5] + roles[:2]),
+      "query": " ".join(keywords[:5] + roles[:2] + alternative_roles[:2]),
       "type": "tavily",
       "roles": roles,
       "skills": skills[:15],
@@ -142,22 +155,29 @@ Return ONLY this JSON:
 
 
 def _extract_keywords(skills, roles, projects, experiences):
+  """Build comprehensive keyword list for maximum coverage."""
   keywords = []
-  keywords.extend(skills[:8])
+  keywords.extend(skills[:10])
   for role in roles[:3]:
-    keywords.extend(role.split())
-  for p in projects[:3]:
-    keywords.extend(p.get("tech_stack", [])[:2])
-  for e in experiences[:2]:
-    keywords.extend(e.get("title", "").split()[:2])
+    keywords.append(role)
+    words = role.split()
+    if len(words) > 1:
+      keywords.extend(words)
+  for p in projects[:4]:
+    keywords.extend(p.get("tech_stack", [])[:3])
+  for e in experiences[:3]:
+    title = e.get("title", "")
+    if title:
+      keywords.append(title)
+      keywords.extend(title.split()[:2])
   seen = set()
   result = []
   for k in keywords:
-    kl = k.lower()
-    if kl not in seen and len(k) > 2:
+    kl = k.lower().strip()
+    if kl not in seen and len(kl) > 2:
       seen.add(kl)
       result.append(k)
-  return result[:15]
+  return result[:20]
 
 
 def _load_career_urls(user_id):

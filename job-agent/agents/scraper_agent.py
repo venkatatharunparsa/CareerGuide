@@ -11,124 +11,162 @@ MOCK_JOBS = [
     "company": "TechCorp India",
     "location": "Hyderabad, India",
     "url": "https://www.naukri.com/job-listings-123456",
-    "description": "Build scalable APIs with FastAPI and Python. PostgreSQL and Docker required.",
+    "description": "FastAPI, Python, PostgreSQL, Docker required.",
     "posted_date": "2 days ago",
     "source": "naukri.com",
     "job_type": "full-time",
   },
   {
     "title": "ML Engineer",
-    "company": "AI Startup",
-    "location": "Bangalore, India (Remote)",
-    "url": "https://www.naukri.com/job-listings-987654",
-    "description": "LLM fine-tuning, RAG pipelines, Python, PyTorch, LangChain.",
+    "company": "AI Startup Bangalore",
+    "location": "Bangalore, India",
+    "url": "https://wellfound.com/jobs/123",
+    "description": "LLM fine-tuning, RAG, Python, PyTorch, LangChain.",
     "posted_date": "1 day ago",
-    "source": "naukri.com",
+    "source": "wellfound.com",
     "job_type": "full-time",
+  },
+  {
+    "title": "Full Stack Developer",
+    "company": "Product Studio",
+    "location": "Remote",
+    "url": "https://remoteok.com/jobs/456",
+    "description": "React, Node.js, Python, AWS, Docker.",
+    "posted_date": "Today",
+    "source": "remoteok.com",
+    "job_type": "remote",
   },
   {
     "title": "Python Developer Internship",
     "company": "GrowthLab",
     "location": "Hyderabad, India",
-    "url": "https://internshala.com/internship/detail/333444",
-    "description": "6-month internship. Django REST APIs, data pipelines, automation.",
+    "url": "https://internshala.com/internship/789",
+    "description": "Django REST APIs, data pipelines, automation.",
     "posted_date": "Today",
     "source": "internshala.com",
     "job_type": "internship",
   },
+  {
+    "title": "DevOps Engineer",
+    "company": "CloudTech",
+    "location": "Remote",
+    "url": "https://himalayas.app/jobs/101",
+    "description": "Docker, Kubernetes, AWS, CI/CD, Terraform.",
+    "posted_date": "3 days ago",
+    "source": "himalayas.app",
+    "job_type": "remote",
+  },
 ]
 
 
-async def _try_real_scrape(instructions: dict) -> list:
+async def scraper_node(state: AgentState) -> AgentState:
+  logger.info("Scraper starting for user %s", state["user_id"])
+  instructions = state.get("scrape_instructions", {})
+  keywords = state.get("search_keywords", [])
+  profile = state.get("user_profile", {})
+  roles = state.get("target_roles", [])
+
+  real_jobs = await _scrape_all_sources(instructions, keywords, roles, profile)
+
+  if real_jobs:
+    logger.info("Real scrape: %d total jobs", len(real_jobs))
+    jobs = real_jobs
+  else:
+    logger.warning("All scrapers returned 0 — using mock jobs")
+    jobs = MOCK_JOBS
+
+  seen = set()
+  unique = []
+  for j in jobs:
+    url = j.get("url", "")
+    if url and url not in seen:
+      seen.add(url)
+      unique.append(j)
+    elif not url:
+      unique.append(j)
+
+  logger.info("Final unique jobs: %d", len(unique))
+  return {**state, "scraped_jobs": unique, "status": "scraped"}
+
+
+async def _scrape_all_sources(instructions, keywords, roles, profile) -> list:
+  """Run all scrapers in parallel for maximum coverage."""
   try:
     from scraper.adzuna_scraper import scrape_arbeitnow
     from scraper.company_career_scraper import scrape_company_careers
     from scraper.github_jobs_scraper import scrape_himalayas
+    from scraper.google_jobs_scraper import scrape_google_jobs
+    from scraper.india_jobs_scraper import scrape_cutshort, scrape_foundit, scrape_unstop
     from scraper.internshala_scraper import scrape_internshala
     from scraper.linkedin_rss_scraper import scrape_linkedin
     from scraper.naukri_scraper import scrape_naukri
     from scraper.remoteok_scraper import scrape_remoteok
     from scraper.tavily_job_scraper import search_jobs_tavily
     from scraper.wellfound_scraper import scrape_wellfound
-    from scraper.weworkremotely_scraper import scrape_weworkremotely
   except ImportError as e:
-    logger.warning("Import failed: %s", e)
+    logger.error("Import failed: %s", e)
     return []
 
-  tasks = []
+  skills = profile.get("all_skills", profile.get("skills", []))
+  main_role = roles[0] if roles else "software developer"
+  main_query = keywords[0] if keywords else main_role + " " + " ".join(skills[:2])
+
+  named_tasks = []
+
   for site_url, config in instructions.items():
-    query = config.get("query", "software developer")
+    query = config.get("query", main_query)
     scrape_type = config.get("type", "board")
 
-    if "naukri" in site_url:
-      tasks.append(("naukri", scrape_naukri(query, limit=8)))
-    elif "internshala" in site_url:
-      tasks.append(("internshala", scrape_internshala(query, limit=8)))
-    elif "linkedin" in site_url:
-      tasks.append(("linkedin", scrape_linkedin(query, limit=8)))
-    elif "remoteok" in site_url:
-      tasks.append(("remoteok", scrape_remoteok(query, limit=8)))
-    elif "wellfound" in site_url:
-      tasks.append(("wellfound", scrape_wellfound(query, limit=8)))
-    elif "weworkremotely" in site_url:
-      tasks.append(("weworkremotely", scrape_weworkremotely(query, limit=8)))
-    elif "himalayas" in site_url:
-      tasks.append(("himalayas", scrape_himalayas(query, limit=8)))
-    elif scrape_type == "tavily" or "tavily" in site_url:
-      roles = config.get("roles", [])
-      skills = config.get("skills", [])
-      tasks.append(
-        ("tavily", search_jobs_tavily(query, roles, skills, max_results=15))
+    if scrape_type == "tavily":
+      named_tasks.append(
+        ("tavily", search_jobs_tavily(query, roles, skills, keywords, max_results=30))
       )
     elif scrape_type == "company_career":
-      tasks.append((site_url, scrape_company_careers(site_url, query, limit=5)))
-    else:
-      tasks.append(("himalayas_fallback", scrape_himalayas(query, limit=5)))
-      tasks.append(("arbeitnow_fallback", scrape_arbeitnow(query, limit=5)))
+      named_tasks.append((f"career:{site_url[:30]}", scrape_company_careers(site_url, query, limit=8)))
+    elif "naukri" in site_url:
+      named_tasks.append(("naukri", scrape_naukri(query, limit=10)))
+    elif "internshala" in site_url:
+      named_tasks.append(("internshala", scrape_internshala(query, limit=10)))
+    elif "linkedin" in site_url:
+      named_tasks.append(("linkedin", scrape_linkedin(query, limit=10)))
+    elif "wellfound" in site_url or "angel" in site_url:
+      named_tasks.append(("wellfound", scrape_wellfound(query, limit=10)))
 
-  all_queries = list(
-    {c.get("query", "software developer") for c in instructions.values()}
+  named_tasks.extend(
+    [
+      ("remoteok_1", scrape_remoteok(main_query, limit=10)),
+      ("remoteok_2", scrape_remoteok(main_role, limit=10)),
+      ("himalayas_1", scrape_himalayas(main_query, limit=10)),
+      ("himalayas_2", scrape_himalayas(main_role, limit=10)),
+      ("arbeitnow_1", scrape_arbeitnow(main_query, limit=10)),
+      ("arbeitnow_2", scrape_arbeitnow(main_role, limit=10)),
+      ("foundit", scrape_foundit(main_query, limit=10)),
+      ("unstop", scrape_unstop(main_query, limit=10)),
+      ("cutshort", scrape_cutshort(main_query, limit=10)),
+      ("google_jobs_1", scrape_google_jobs(main_query, limit=15)),
+      ("google_jobs_2", scrape_google_jobs(main_role, limit=15)),
+    ]
   )
-  main_query = all_queries[0] if all_queries else "software developer"
-  tasks.append(("remoteok_always", scrape_remoteok(main_query, limit=5)))
-  tasks.append(("himalayas_always", scrape_himalayas(main_query, limit=5)))
-  tasks.append(("arbeitnow_always", scrape_arbeitnow(main_query, limit=5)))
 
-  if not tasks:
-    return []
+  for role in roles[1:3]:
+    named_tasks.extend(
+      [
+        (f"remoteok_{role[:10]}", scrape_remoteok(role, limit=5)),
+        (f"himalayas_{role[:10]}", scrape_himalayas(role, limit=5)),
+      ]
+    )
 
-  names, coros = zip(*tasks)
+  names, coros = zip(*named_tasks) if named_tasks else ([], [])
   results = await asyncio.gather(*coros, return_exceptions=True)
 
   all_jobs = []
-  for name, r in zip(names, results):
-    if isinstance(r, list):
-      logger.info("  %s: %d jobs", name, len(r))
-      all_jobs.extend(r)
+  for name, result in zip(names, results):
+    if isinstance(result, list) and result:
+      logger.info("  %s: %d jobs", name, len(result))
+      all_jobs.extend(result)
+    elif isinstance(result, Exception):
+      logger.warning("  %s failed: %s", name, result)
     else:
-      logger.warning("  %s failed: %s", name, r)
+      logger.debug("  %s: 0 jobs", name)
 
   return all_jobs
-
-
-async def scraper_node(state: AgentState) -> AgentState:
-  logger.info("Scraper agent starting for user %s", state["user_id"])
-  instructions = state.get("scrape_instructions", {})
-
-  real_jobs = await _try_real_scrape(instructions)
-
-  if real_jobs:
-    logger.info("Real scrape succeeded: %d jobs", len(real_jobs))
-    jobs = real_jobs
-  else:
-    logger.info("Using mock jobs as fallback")
-    jobs = MOCK_JOBS
-
-  seen = set()
-  unique = []
-  for j in jobs:
-    if j["url"] not in seen:
-      seen.add(j["url"])
-      unique.append(j)
-
-  return {**state, "scraped_jobs": unique, "status": "scraped"}

@@ -60,9 +60,9 @@ async def monitor_node(state: AgentState) -> AgentState:
 
   summary = (
     f"Evaluated {len(scraped)} jobs. "
-    f"{len(top)} matched (score ≥50). "
+    f"{len(top)} matched (score >=50). "
     f"Top: {top[0]['title'] if top else 'none'} "
-    f"({top[0].get('match_score', 0)}% match)."
+    f"({top[0].get('match_score', 0) if top else 0}% match)."
   )
 
   logger.info("Monitor complete. %d jobs passed filter.", len(top))
