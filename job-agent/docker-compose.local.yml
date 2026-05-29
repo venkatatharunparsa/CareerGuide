@@ -1,6 +1,5 @@
-# AWS / EC2: docker compose up --build
-# Local:    docker compose -f docker-compose.local.yml up --build
-# VITE_API_URL is baked at frontend BUILD time (build.args) — set before image build.
+# Local dev: docker compose -f docker-compose.local.yml up --build
+# VITE_API_URL is baked at frontend image build time (see build.args).
 services:
   backend:
     build:
@@ -14,30 +13,24 @@ services:
     environment:
       - PYTHONPATH=/app:/workspace
       - CHROMA_PERSIST_PATH=/chroma_db
-      - SQLITE_DB_PATH=/chroma_db/jobagent.db
     volumes:
       - ./agents:/workspace/agents
       - ./rag:/workspace/rag
       - ./scraper:/workspace/scraper
       - chroma_data:/chroma_db
-    restart: always
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+    restart: unless-stopped
 
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        - VITE_API_URL=http://3.91.201.199:8000
+        - VITE_API_URL=http://localhost:8000
     container_name: job_agent_frontend
     ports:
       - "3000:3000"
     environment:
-      - VITE_API_URL=http://3.91.201.199:8000
+      - VITE_API_URL=http://localhost:8000
     depends_on:
       - backend
     restart: unless-stopped
