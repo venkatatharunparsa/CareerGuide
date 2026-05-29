@@ -1,49 +1,91 @@
+import asyncio
 import logging
-from functools import lru_cache
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
 logger = logging.getLogger(__name__)
+scheduler = AsyncIOScheduler(
+  job_defaults={
+    "coalesce": True,
+    "max_instances": 1,
+    "misfire_grace_time": 300,
+  }
+)
 
 
-class SchedulerService:
-  """Background job scheduling for periodic agent runs."""
+def start_scheduler():
+  if scheduler.running:
+    logger.info("Scheduler already running")
+    return
 
-  def __init__(self) -> None:
-    self._scheduler = AsyncIOScheduler()
-    self._started = False
+  scheduler.add_job(
+    _run_scheduled_agents,
+    trigger=IntervalTrigger(hours=6),
+    id="auto_scrape",
+    replace_existing=True,
+    name="Auto Job Scrape",
+  )
+  scheduler.start()
+  logger.info("Scheduler started — auto-scrape every 6h")
 
-  def start(self) -> None:
-    if self._started:
+
+async def _run_scheduled_agents():
+  """Run agent for all users with saved profiles."""
+  logger.info("Scheduled agent run starting...")
+  try:
+    users = await asyncio.to_thread(_get_active_users)
+    if not users:
+      logger.info("No active users to process")
       return
-    self._scheduler.start()
-    self._started = True
-    logger.info("APScheduler started")
 
-  def shutdown(self) -> None:
-    if self._started:
-      self._scheduler.shutdown(wait=False)
-      self._started = False
-      logger.info("APScheduler shut down")
+    logger.info("Running scheduled scrape for %d users", len(users))
 
-  def schedule_agent_run(
-    self,
-    user_id: str,
-    job_func,
-    *,
-    hours: int = 24,
-  ) -> None:
-    self._scheduler.add_job(
-      job_func,
-      trigger=IntervalTrigger(hours=hours),
-      id=f"agent_run_{user_id}",
-      replace_existing=True,
-      kwargs={"user_id": user_id},
-    )
-    logger.info("Scheduled agent run for user %s every %sh", user_id, hours)
+    from agents.graph import run_agent
+    from app.database import get_full_profile, save_evaluated_jobs
+    from app.services.email_service import get_email_service
+
+    email_svc = get_email_service()
+
+    for username in users:
+      try:
+        profile = await asyncio.to_thread(get_full_profile, username)
+        if not profile or not profile.get("skills"):
+          continue
+
+        result = await run_agent(
+          user_id=username,
+          user_profile=profile,
+          target_roles=profile.get("target_roles", []),
+        )
+
+        jobs = result.get("filtered_jobs", [])
+
+        await asyncio.to_thread(save_evaluated_jobs, username, jobs)
+
+        if jobs:
+          email_svc.send_job_digest(jobs, username)
+          logger.info("Scheduled run done for %s: %d jobs", username, len(jobs))
+
+      except Exception as e:
+        logger.error("Scheduled run failed for %s: %s", username, e)
+
+  except Exception as e:
+    logger.error("Scheduler error: %s", e)
 
 
-@lru_cache
-def get_scheduler_service() -> SchedulerService:
-  return SchedulerService()
+def _get_active_users() -> list:
+  """Synchronous DB query — called via asyncio.to_thread."""
+  try:
+    from app.database import get_db
+
+    conn = get_db()
+    rows = conn.execute(
+      "SELECT username FROM user_profiles "
+      "WHERE skills != '[]' AND skills IS NOT NULL"
+    ).fetchall()
+    conn.close()
+    return [r["username"] for r in rows]
+  except Exception as e:
+    logger.error("Failed to get active users: %s", e)
+    return []

@@ -8,6 +8,15 @@ from agents.state import AgentState
 logger = logging.getLogger(__name__)
 
 
+def _save_evaluated_sync(user_id: str, jobs: list):
+  try:
+    from app.database import save_evaluated_jobs
+
+    save_evaluated_jobs(user_id, jobs)
+  except Exception as e:
+    logger.warning("_save_evaluated_sync failed: %s", e)
+
+
 async def monitor_node(state: AgentState) -> AgentState:
   logger.info("Evaluator starting for user %s", state["user_id"])
   profile = state["user_profile"]
@@ -32,27 +41,34 @@ async def monitor_node(state: AgentState) -> AgentState:
   evaluated.sort(key=lambda x: x.get("match_score", 0), reverse=True)
   top = evaluated[:25]
 
+  # Non-blocking evaluated jobs save (Strategy B)
   try:
-    from app.database import save_evaluated_jobs
-
-    save_evaluated_jobs(state["user_id"], top)
+    await asyncio.to_thread(_save_evaluated_sync, state["user_id"], top)
   except Exception as e:
-    logger.warning("DB save failed: %s", e)
+    logger.warning("Evaluated jobs save failed: %s", e)
 
   try:
     from rag.chroma_client import ChromaDBClient
+    from scraper.base_scraper import make_job_id
 
     db = ChromaDBClient()
-    for i, job in enumerate(top):
+    for job in top:
+      job_hash = job.get("job_id") or make_job_id(
+        job.get("url", ""),
+        job.get("title", ""),
+        job.get("company", ""),
+      )
+      doc_id = f"job_{state['user_id']}_{job_hash}"
       db.add_document(
         collection_name="job_listings",
-        doc_id=f"job_{state['user_id']}_{i}",
+        doc_id=doc_id,
         text=f"{job['title']} {job['company']} {job.get('description', '')}",
         metadata={
           "user_id": state["user_id"],
           "title": job["title"],
           "match_score": str(job.get("match_score", 0)),
           "url": job.get("url", ""),
+          "job_id": job_hash,
         },
       )
   except Exception as e:

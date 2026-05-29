@@ -2,8 +2,19 @@ import asyncio
 import logging
 
 from agents.state import AgentState
+from scraper.base_scraper import make_job_id
 
 logger = logging.getLogger(__name__)
+
+
+def cache_jobs_sync(user_id: str, jobs: list):
+  """Synchronous SQLite write — called via asyncio.to_thread."""
+  try:
+    from app.database import cache_jobs
+
+    cache_jobs(user_id, jobs)
+  except Exception as e:
+    logger.warning("cache_jobs_sync failed: %s", e)
 
 MOCK_JOBS = [
   {
@@ -75,15 +86,25 @@ async def scraper_node(state: AgentState) -> AgentState:
     logger.warning("All scrapers returned 0 — using mock jobs")
     jobs = MOCK_JOBS
 
+  # Hash-based deduplication (Strategy D)
   seen = set()
   unique = []
   for j in jobs:
-    url = j.get("url", "")
-    if url and url not in seen:
-      seen.add(url)
+    job_id = j.get("job_id") or make_job_id(
+      j.get("url", ""),
+      j.get("title", ""),
+      j.get("company", ""),
+    )
+    j["job_id"] = job_id
+    if job_id not in seen:
+      seen.add(job_id)
       unique.append(j)
-    elif not url:
-      unique.append(j)
+
+  # Non-blocking SQLite write (Strategy B)
+  try:
+    await asyncio.to_thread(cache_jobs_sync, state["user_id"], unique)
+  except Exception as e:
+    logger.warning("Cache write failed: %s", e)
 
   logger.info("Final unique jobs: %d", len(unique))
   return {**state, "scraped_jobs": unique, "status": "scraped"}

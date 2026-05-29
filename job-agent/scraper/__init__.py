@@ -1,5 +1,11 @@
-from scraper.base_scraper import BaseScraper, ScrapeResult
-from scraper.bs4_scraper import BS4Scraper
-from scraper.playwright_scraper import PlaywrightScraper
+from scraper.base_scraper import (
+  extract_json_ld_jobs,
+  fetch_with_fallback,
+  make_job_id,
+)
 
-__all__ = ["BaseScraper", "ScrapeResult", "BS4Scraper", "PlaywrightScraper"]
+__all__ = [
+  "extract_json_ld_jobs",
+  "fetch_with_fallback",
+  "make_job_id",
+]
