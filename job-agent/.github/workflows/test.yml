@@ -1,0 +1,42 @@
+name: Run Tests
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  syntax-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Check Python syntax
+        run: |
+          find backend agents scraper rag -name "*.py" \
+            -exec python -m py_compile {} \;
+          echo "All Python files syntax OK"
+
+      - name: Check for hardcoded secrets
+        run: |
+          if grep -r "AIzaSy" backend/ agents/ scraper/ \
+               --include="*.py" 2>/dev/null; then
+            echo "ERROR: Hardcoded API key found"
+            exit 1
+          fi
+          echo "No hardcoded secrets found"
+
+      - name: Check for debug prints
+        run: |
+          count=$(grep -r "^print(" backend/ agents/ \
+                   --include="*.py" | wc -l)
+          echo "Found $count print statements"
+          if [ "$count" -gt "5" ]; then
+            echo "WARNING: Too many print statements, use logging"
+          fi

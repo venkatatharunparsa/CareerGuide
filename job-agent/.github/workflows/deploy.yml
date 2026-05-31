@@ -19,5 +19,7 @@ jobs:
             git pull origin main
             docker-compose down
             docker-compose up --build -d
-            echo "Deployed at $(date)"
-            docker-compose ps
+            sleep 10
+            curl -f http://localhost:8000/health && \
+              echo "Deploy successful" || \
+              echo "Health check failed"

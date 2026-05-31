@@ -20,79 +20,7 @@ An agentic job search platform that scrapes listings from dozens of sources, sco
 
 ---
 
-## Quick start
-
-### Prerequisites
-
-- [Docker Desktop](https://www.docker.com/products/docker-desktop/) (recommended)
-- Git
-
-### 1. Clone and configure
-
-```bash
-git clone https://github.com/YOUR_ORG/CareerGuide.git
-cd CareerGuide/job-agent
-cp .env.example .env   # Windows: copy .env.example .env
-```
-
-Edit `.env` and set at least `SECRET_KEY` and one `GEMINI_API_KEY_*`. See [Environment variables](#environment-variables).
-
-### 2. Run with Docker
-
-**Local development** (API at `localhost:8000`):
-
-```bash
-docker compose -f docker-compose.local.yml up --build -d
-```
-
-**Production / EC2** (uses public API URL baked into the frontend build):
-
-```bash
-docker compose up --build -d
-```
-
-### 3. Open the app
-
-| Service | URL |
-|---------|-----|
-| Frontend | http://localhost:3000 |
-| API docs | http://localhost:8000/docs |
-| Health | http://localhost:8000/health |
-
-Register a user, fill in your profile, then run the agent from the Dashboard.
-
----
-
-## Environment variables
-
-Copy `.env.example` to `.env`. Variables are loaded by the backend via `env_file` in Docker Compose.
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `GEMINI_API_KEY_1` | Recommended | — | Primary Google Gemini API key ([AI Studio](https://aistudio.google.com/)) |
-| `GEMINI_API_KEY_2` | Optional | — | Second key for rate-limit rotation |
-| `GEMINI_API_KEY_3` | Optional | — | Third key for rate-limit rotation |
-| `TAVILY_API_KEY` | Recommended | — | Tavily search API ([tavily.com](https://tavily.com)) for internet-wide job discovery |
-| `SECRET_KEY` | **Yes** | — | JWT signing secret — use a long random string in production |
-| `ALGORITHM` | No | `HS256` | JWT algorithm |
-| `ACCESS_TOKEN_EXPIRE_MINUTES` | No | `60` | Auth token lifetime in minutes |
-| `APP_ENV` | No | `development` | Environment label (`development` / `production`) |
-| `CHROMA_PERSIST_PATH` | No | `./chroma_db` | ChromaDB storage path |
-| `SQLITE_DB_PATH` | No | `/chroma_db/jobagent.db` | SQLite database path (set in Docker Compose) |
-| `BACKEND_HOST` | No | `0.0.0.0` | FastAPI bind host |
-| `BACKEND_PORT` | No | `8000` | FastAPI port |
-| `FRONTEND_URL` | No | `http://localhost:3000` | CORS allowed origin for the React app |
-| `GMAIL_SENDER` | Optional | — | Gmail address for job digest emails |
-| `GMAIL_APP_PASSWORD` | Optional | — | Gmail app password (not your login password) |
-| `NOTIFICATION_EMAIL` | Optional | — | Recipient for job digest emails |
-
-**Frontend (Docker build-time only):** `VITE_API_URL` is baked into the React bundle at **image build** time. Set it in `docker-compose.yml` (`build.args`) for EC2, or `docker-compose.local.yml` for local dev. It is not read from `.env` at runtime by Vite.
-
----
-
 ## Architecture
-
-Job Agent is a three-tier system: React frontend, FastAPI backend, and a LangGraph agent pipeline with pluggable scrapers.
 
 ```
 ┌─────────────┐     REST/JWT      ┌──────────────────┐
@@ -116,46 +44,331 @@ Job Agent is a three-tier system: React frontend, FastAPI backend, and a LangGra
                   └──────────┘
 ```
 
-**Agent flow**
-
-1. **Planner** — reads the full user profile (skills, projects, experience), picks job boards, builds search keywords, and configures Tavily queries via Gemini (with rule-based fallback).
-2. **Scraper** — runs all sources in parallel (API scrapers, Tavily, Google Jobs, India boards, company career pages). Deduplicates by MD5 job hash. Caches raw results in SQLite.
-3. **Monitor / Evaluator** — batch-scores jobs 0–100 with Gemini (keyword fallback on quota limits). Persists top matches with skill gaps and learning suggestions to SQLite and ChromaDB.
-
-**Data stores**
-
-- **SQLite** — users, profiles, resumes, projects, experiences, job cache, evaluated jobs, tailored resumes
-- **ChromaDB** — semantic embeddings for profiles, job listings, and career page URLs
+1. **Planner** — reads the full user profile, picks job boards, builds search keywords, configures Tavily queries via Gemini (rule-based fallback on quota errors).
+2. **Scraper** — runs all sources in parallel. Deduplicates by MD5 job hash. Caches raw results in SQLite.
+3. **Monitor / Evaluator** — batch-scores jobs 0–100 with Gemini (keyword fallback). Persists top matches with skill gaps to SQLite and ChromaDB.
 
 ---
 
-## Tech stack
+## Tech Stack
 
-| Layer | Technologies |
-|-------|----------------|
-| Frontend | React 18, Vite, Tailwind CSS, TanStack Query, Axios |
-| Backend | FastAPI, Pydantic, python-jose, SQLite |
-| Agents | LangGraph, LangChain, Google Gemini 2.0 Flash |
-| Scraping | httpx, BeautifulSoup, Tavily, Playwright (memory-safe config) |
-| Vector DB | ChromaDB |
-| PDF / Resume | ReportLab, LaTeX templates via Gemini |
-| Scheduling | APScheduler |
-| Deploy | Docker Compose, GitHub Actions → EC2 |
+| Layer | Technology |
+|---|---|
+| Agent orchestration | LangGraph + LangChain |
+| LLM | Google Gemini 1.5 Flash (3-key rotation) |
+| Web search | Tavily API |
+| Backend | FastAPI + Python 3.11 |
+| Database | SQLite (persistent) + ChromaDB (RAG) |
+| Frontend | React 18 + Vite + TailwindCSS |
+| Scraping | httpx + BeautifulSoup4 + JSON-LD extraction |
+| PDF | ReportLab + LaTeX templates |
+| Scheduler | APScheduler (6-hour auto-run) |
+| Deployment | Docker + Nginx + AWS EC2 |
+| CI/CD | GitHub Actions |
 
 ---
 
-## Project structure
+## Quick Start (Local)
+
+### Prerequisites
+
+- Docker Desktop installed
+- Git installed
+- 3 free Gemini API keys ([aistudio.google.com](https://aistudio.google.com))
+- 1 free Tavily API key ([tavily.com](https://tavily.com))
+
+### Step 1 — Fork and clone
+
+```bash
+# Fork the repo on GitHub first, then:
+git clone https://github.com/YOUR_USERNAME/job-agent.git
+cd job-agent
+```
+
+### Step 2 — Configure environment
+
+```bash
+cp .env.example .env
+```
+
+Open `.env` and fill in:
+
+```env
+GEMINI_API_KEY_1=AIzaSy...     # From aistudio.google.com
+GEMINI_API_KEY_2=AIzaSy...     # Second account (avoids quota)
+GEMINI_API_KEY_3=AIzaSy...     # Third account (failsafe)
+TAVILY_API_KEY=tvly-...        # From tavily.com
+SECRET_KEY=run-python-secrets-token-hex-32-here
+```
+
+Generate `SECRET_KEY`:
+
+```bash
+python -c "import secrets; print(secrets.token_hex(32))"
+```
+
+### Step 3 — Run
+
+```bash
+docker compose -f docker-compose.local.yml up --build -d
+```
+
+First build takes 5–10 minutes. Then open:
+
+- Frontend: http://localhost:3000
+- API docs: http://localhost:8000/docs
+
+> **Note:** Use `docker-compose.local.yml` for local dev so `VITE_API_URL` points to `http://localhost:8000`. For EC2/production, use `docker compose up --build -d` (see [Deploy to AWS](#deploy-to-aws-free-tier-247)).
+
+### Step 4 — Set up your profile
+
+1. Register an account at http://localhost:3000
+2. Go to **Profile**
+3. Upload your resume PDF — skills auto-extracted
+4. Add projects with tech stacks
+5. Add work experience / internships
+6. Set target roles
+7. Click **Save**
+
+### Step 5 — Run the agent
+
+1. Go to **Dashboard**
+2. Click **Run Job Agent**
+3. Wait 60–90 seconds
+4. Go to **Jobs** — see ranked matches
+5. Click any job → see matched/missing skills
+6. Click **Tailor Resume PDF** → download ATS resume
+
+---
+
+## Deploy to AWS Free Tier (24/7)
+
+### Step 1 — Launch EC2
+
+1. Go to AWS Console → EC2 → Launch Instance
+2. Choose: Ubuntu 22.04 or Amazon Linux 2023
+3. Type: **t3.micro** (free tier)
+4. Create key pair → download `.pem` file
+5. Security group: allow ports **22**, **80**, **8000**, **3000**
+6. Launch
+
+### Step 2 — Connect and install Docker
+
+```bash
+ssh -i "your-key.pem" ec2-user@YOUR_EC2_IP
+
+sudo yum update -y
+sudo yum install -y docker git
+sudo systemctl start docker
+sudo systemctl enable docker
+sudo usermod -aG docker $USER
+
+# Install Docker Compose
+sudo curl -L "https://github.com/docker/compose/releases/download/v2.24.0/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+sudo chmod +x /usr/local/bin/docker-compose
+
+# Install buildx
+mkdir -p ~/.docker/cli-plugins
+curl -SL "https://github.com/docker/buildx/releases/download/v0.17.1/buildx-v0.17.1.linux-amd64" -o ~/.docker/cli-plugins/docker-buildx
+chmod +x ~/.docker/cli-plugins/docker-buildx
+```
+
+Log out and back in so the `docker` group applies.
+
+### Step 3 — Clone and configure
+
+```bash
+git clone https://github.com/YOUR_USERNAME/job-agent.git
+cd job-agent
+nano .env   # Add your real API keys
+```
+
+Update `FRONTEND_URL` in `.env`:
+
+```env
+FRONTEND_URL=http://YOUR_EC2_IP:3000
+```
+
+Update `VITE_API_URL` in `docker-compose.yml` (baked at frontend **build** time):
+
+```bash
+sed -i 's|VITE_API_URL=http://3.91.201.199:8000|VITE_API_URL=http://YOUR_EC2_IP:8000|g' docker-compose.yml
+```
+
+Add GitHub Actions secrets for auto-deploy: `EC2_HOST`, `EC2_USER`, `EC2_SSH_KEY` (see `.github/workflows/deploy.yml`).
+
+### Step 4 — Deploy
+
+```bash
+docker-compose up --build -d
+docker-compose logs -f backend
+# Wait for: Application startup complete
+```
+
+### Step 5 — Auto-restart on reboot
+
+```bash
+sudo nano /etc/systemd/system/job-agent.service
+```
+
+Paste:
+
+```ini
+[Unit]
+Description=Job Agent
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/home/ec2-user/job-agent
+ExecStart=/usr/local/bin/docker-compose up -d
+ExecStop=/usr/local/bin/docker-compose down
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable job-agent
+```
+
+### AWS Free Tier cost: $0/month
+
+- EC2 t3.micro: 750h free
+- EBS storage: 30GB free
+- Gemini API: free tier (3 keys)
+- Tavily: 1000 searches/month free
+- Gmail SMTP: always free
+
+---
+
+## Email Notifications Setup
+
+Get Gmail App Password:
+
+1. [myaccount.google.com](https://myaccount.google.com)
+2. Security → 2-Step Verification → App Passwords
+3. Create "Job Agent" → copy 16-char password
+
+Add to `.env`:
+
+```env
+GMAIL_SENDER=your@gmail.com
+GMAIL_APP_PASSWORD=xxxx xxxx xxxx xxxx
+NOTIFICATION_EMAIL=your@gmail.com
+```
+
+You will receive a digest email every 6 hours with:
+
+- Job title and company
+- Match percentage
+- Direct apply link
+
+---
+
+## Environment Variables Reference
+
+| Variable | Required | Description |
+|---|---|---|
+| `GEMINI_API_KEY_1` | Yes | Gemini API key ([aistudio.google.com](https://aistudio.google.com)) |
+| `GEMINI_API_KEY_2` | Recommended | Second key for rotation |
+| `GEMINI_API_KEY_3` | Recommended | Third key for failsafe |
+| `TAVILY_API_KEY` | Yes | Tavily search API ([tavily.com](https://tavily.com)) |
+| `SECRET_KEY` | Yes | JWT secret (generate randomly) |
+| `ALGORITHM` | No | JWT algorithm (default: `HS256`) |
+| `ACCESS_TOKEN_EXPIRE_MINUTES` | No | Token expiry (default: `60`) |
+| `CHROMA_PERSIST_PATH` | No | ChromaDB path (default: `/chroma_db`) |
+| `SQLITE_DB_PATH` | No | SQLite path (default: `/chroma_db/jobagent.db`) |
+| `APP_ENV` | No | `development` or `production` |
+| `FRONTEND_URL` | Yes | Frontend URL for CORS |
+| `GMAIL_SENDER` | No | Gmail address for notifications |
+| `GMAIL_APP_PASSWORD` | No | Gmail app password |
+| `NOTIFICATION_EMAIL` | No | Where to send digests |
+
+**Frontend (Docker build-time):** `VITE_API_URL` is set in `docker-compose.yml` or `docker-compose.local.yml` under `frontend.build.args` — not read from `.env` at runtime.
+
+See [`.env.example`](./.env.example) for commented templates.
+
+---
+
+## Known Limitations
+
+We are honest about what does not work perfectly yet. These are areas where contributors can make the biggest impact:
+
+### Scraping (HIGH PRIORITY)
+
+- LinkedIn, Indeed, Naukri block simple HTTP scrapers — returns 0 jobs without Tavily fallback
+- Google Jobs HTML structure changes frequently
+- Foundit and Cutshort selectors break regularly
+- No Playwright integration yet for JS-heavy sites (blocked by 1GB RAM constraint on free EC2)
+
+### AI / Scoring
+
+- Gemini free tier quota exhausts quickly with 3+ users — falls back to keyword matching
+- Resume tailoring quality drops without real resume text uploaded
+- LaTeX compilation not available — uses ReportLab instead (PDF looks plain, not like a proper LaTeX resume)
+
+### Features Not Yet Built
+
+- Auto-apply to jobs (coming next)
+- LinkedIn OAuth integration
+- Multiple user support with isolated scheduling
+- Resume version history
+- Job application tracking
+- Browser extension for one-click apply
+- Mobile app
+
+### Infrastructure
+
+- No HTTPS/SSL yet (running on HTTP)
+- No load balancing (single EC2 instance)
+- No database backups automated
+- Frontend rebuilds required when EC2 IP changes
+
+---
+
+## Contributing
+
+We welcome contributions. See [CONTRIBUTING.md](./CONTRIBUTING.md) for the full guide.
+
+### High-priority areas
+
+1. **Scraper reliability** — Playwright sidecar, better selectors, anti-bot bypass, more Indian boards
+2. **Resume quality** — LaTeX compilation (tectonic/pdflatex), more templates, browser preview
+3. **Semantic scoring** — prompt tuning, Ollama/local LLM option, embedding-based similarity
+4. **Multi-user scheduling** — per-user cron, timezone-aware runs, rate limiting
+
+### Quick contribution flow
+
+```bash
+git clone https://github.com/YOUR_USERNAME/job-agent.git
+cd job-agent
+git checkout -b feat/your-feature-name
+# make changes
+python test_smoke.py
+git push origin feat/your-feature-name
+# open Pull Request against main
+```
+
+---
+
+## Project Structure
 
 ```
 job-agent/
-├── backend/          FastAPI app (auth, profile, jobs, agents routers)
-├── agents/           LangGraph planner, scraper, monitor nodes
-├── scraper/          Per-site scrapers + JSON-LD base utilities
-├── rag/              ChromaDB client
-├── frontend/         React SPA
-├── docker-compose.yml           EC2 / production
-├── docker-compose.local.yml     Local development
-└── test_smoke.py     End-to-end smoke test
+├── backend/                 FastAPI app (auth, profile, jobs, agents)
+├── agents/                  LangGraph planner, scraper, monitor nodes
+├── scraper/                 Per-site scrapers + JSON-LD utilities
+├── rag/                     ChromaDB client
+├── frontend/                React SPA (Vite + Tailwind)
+├── docker-compose.yml       EC2 / production
+├── docker-compose.local.yml   Local development
+├── .github/workflows/       CI/CD (deploy to EC2)
+├── test_smoke.py            End-to-end smoke test
+└── test_scrapers_v2.py      Scraper coverage test
 ```
 
 ---
@@ -168,19 +381,6 @@ python test_smoke.py
 python test_full_system.py
 python test_scrapers_v2.py
 ```
-
-See [CONTRIBUTING.md](./CONTRIBUTING.md) for full development setup.
-
----
-
-## Contributing
-
-We welcome issues and pull requests. Please read [CONTRIBUTING.md](./CONTRIBUTING.md) before submitting changes.
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/my-change`)
-3. Commit your changes
-4. Push and open a Pull Request against `main`
 
 ---
 

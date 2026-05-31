@@ -4,6 +4,38 @@ Thank you for your interest in contributing. This guide covers local setup, test
 
 ---
 
+## High-priority issues
+
+### 1. Scraper reliability
+
+The biggest weakness. We need:
+
+- Playwright scraper container (separate Docker service)
+- Better HTML selector maintenance for Naukri/Indeed
+- Anti-bot bypass strategies
+- More Indian job boards (Freshersworld, Hirist, iimjobs)
+
+### 2. Resume quality
+
+- LaTeX compilation via tectonic or pdflatex in Docker
+- More resume templates (5+ professional designs)
+- ATS score validation against real ATS systems
+- Resume preview in browser before download
+
+### 3. Semantic scoring accuracy
+
+- Better prompt engineering for Gemini scoring
+- Local LLM option (Ollama) for offline/quota-free use
+- Embedding-based similarity as scoring layer
+
+### 4. Multi-user scheduling
+
+- Per-user cron configuration
+- Timezone-aware scheduling
+- Rate limiting per user
+
+---
+
 ## Local development setup
 
 ### Prerequisites
@@ -11,131 +43,91 @@ Thank you for your interest in contributing. This guide covers local setup, test
 - Docker Desktop (recommended)
 - Python 3.11+ (for running tests outside Docker)
 - Git
+- 3 Gemini API keys + 1 Tavily key (free tiers)
 
-### 1. Clone and configure
+### Clone and configure
 
 ```bash
-git clone https://github.com/YOUR_ORG/CareerGuide.git
-cd CareerGuide/job-agent
+git clone https://github.com/YOUR_USERNAME/job-agent.git
+cd job-agent
 cp .env.example .env
 ```
 
-Edit `.env` and set:
+Edit `.env` and set `SECRET_KEY`, `GEMINI_API_KEY_*`, and `TAVILY_API_KEY`.
 
-- `SECRET_KEY` — any long random string
-- At least one `GEMINI_API_KEY_*`
-- `TAVILY_API_KEY` (recommended for full scraper coverage)
+Generate `SECRET_KEY`:
 
-### 2. Start the stack
+```bash
+python -c "import secrets; print(secrets.token_hex(32))"
+```
 
-**Local Docker** (frontend talks to `http://localhost:8000`):
+### Run locally
 
 ```bash
 docker compose -f docker-compose.local.yml up --build -d
 ```
 
-**Without Docker** (advanced):
-
-```bash
-cd backend
-pip install -r requirements.txt
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-
-# Separate terminal
-cd frontend
-npm install
-npm run dev
-```
-
-Set `PYTHONPATH` to include the repo root so `agents/`, `scraper/`, and `rag/` import correctly:
-
-```bash
-export PYTHONPATH=/path/to/job-agent/backend:/path/to/job-agent
-```
-
-### 3. Verify the app
-
 - Frontend: http://localhost:3000
 - API docs: http://localhost:8000/docs
-- Register a user, save a profile, run the agent from the Dashboard
 
----
-
-## Running tests
-
-The backend must be running on `http://localhost:8000` for integration tests.
+### Run tests
 
 ```bash
-pip install httpx   # if not already installed
+pip install httpx
 
-# End-to-end smoke test (auth, profile, agent, jobs)
 python test_smoke.py
-
-# Full system test (profile, agent, scoring shape, resume tailor)
-python test_full_system.py
-
-# Individual scraper coverage
 python test_scrapers_v2.py
-
-# Data persistence across restarts
+python test_full_system.py
 python test_persist.py
-python test_persist.py after   # run after docker compose restart backend
 ```
 
-All tests should report `PASS` or `ALL TESTS PASSED` before opening a PR.
-
-### Rebuild after backend changes
+Watch logs:
 
 ```bash
+docker compose logs -f backend
+```
+
+### Rebuild after changes
+
+```bash
+# Backend
 docker compose -f docker-compose.local.yml build backend
 docker compose -f docker-compose.local.yml up -d backend
-```
 
-### Rebuild after frontend changes
-
-```bash
+# Frontend
 docker compose -f docker-compose.local.yml build frontend
 docker compose -f docker-compose.local.yml up -d frontend
 ```
 
 ---
 
-## Code style
-
-- Match existing patterns in the file you edit (naming, imports, formatting).
-- Keep changes focused — one feature or fix per PR.
-- Do not commit secrets (`.env`, `*.pem`, API keys).
-- Do not commit generated artifacts (`chroma_db/`, `*.db`, `node_modules/`).
-
----
-
 ## Submitting pull requests
 
-1. **Fork** the repository on GitHub.
-2. **Create a branch** from `main`:
+1. Fork the repository on GitHub
+2. Clone your fork and create a branch:
    ```bash
-   git checkout -b feature/short-description
+   git clone https://github.com/YOUR_USERNAME/job-agent.git
+   cd job-agent
+   git checkout -b feat/your-feature-name
    ```
-3. **Make your changes** and test locally.
-4. **Commit** with a clear message:
-   ```bash
-   git commit -m "Add scraper for example.com job board"
-   ```
-5. **Push** to your fork:
-   ```bash
-   git push origin feature/short-description
-   ```
-6. **Open a Pull Request** against `main` with:
-   - What changed and why
-   - How you tested it
-   - Screenshots for UI changes (if applicable)
+3. Make your changes with tests
+4. Run `python test_smoke.py` — must pass
+5. Push and open a Pull Request against `main`
 
 ### PR checklist
 
-- [ ] Tests pass locally (`python test_smoke.py`)
-- [ ] No secrets or `.env` files in the diff
-- [ ] `.env.example` updated if new environment variables were added
-- [ ] README or CONTRIBUTING updated if setup steps changed
+- [ ] `python test_smoke.py` passes
+- [ ] No secrets (`.env`, `*.pem`) in the diff
+- [ ] `.env.example` updated if new env vars were added
+- [ ] README updated if setup or behavior changed
+
+---
+
+## Code style
+
+- Match existing patterns in the file you edit
+- Keep changes focused — one feature or fix per PR
+- Do not commit generated artifacts (`chroma_db/`, `*.db`, `node_modules/`)
 
 ---
 
@@ -145,11 +137,5 @@ Open a GitHub issue with:
 
 - Steps to reproduce
 - Expected vs actual behavior
-- Relevant logs (`docker compose logs backend --tail=50`)
-- Your environment (OS, Docker version, local vs EC2)
-
----
-
-## Questions
-
-Open a GitHub Discussion or issue if you need help getting started.
+- Relevant logs: `docker compose logs backend --tail=50`
+- Environment (OS, Docker version, local vs EC2)
